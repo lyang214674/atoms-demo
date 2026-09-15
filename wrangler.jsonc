@@ -1,37 +1,44 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "atoms-demo",
-  "main": "worker/index.ts",
-  "compatibility_date": "2025-06-01",
-  "compatibility_flags": ["nodejs_compat"],
-  "assets": {
-    "directory": "./dist",
-    "not_found_handling": "single-page-application",
-    "binding": "ASSETS",
-    "run_worker_first": ["/api/*", "/raw/*"]
-  },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "atoms-demo",
-      "database_id": "REPLACE_AFTER_wrangler_d1_create",
-      "migrations_dir": "migrations"
-    }
-  ],
-  "vars": {
-    // OpenAI-compatible endpoint. Works for OpenAI, DeepSeek, Gemini (openai/ path), Groq, etc.
-    // Default: Gemini via its OpenAI-compatible endpoint (free tier friendly).
-    "LLM_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai",
-    // Builder writes the app with this model…
-    "LLM_MODEL": "gemini-3.5-flash",
-    // …Planner and Reviewer use the cheaper one to save quota.
-    "LLM_MODEL_FAST": "gemini-3.5-flash-lite",
-    // Per-user generation cap per UTC day, to bound API spend during review.
-    "DAILY_GEN_LIMIT": "10",
-    // All users combined per UTC day — protects the free-tier model quota.
-    "GLOBAL_DAILY_GEN_LIMIT": "60"
-  },
-  "observability": { "enabled": true }
-  // Secrets (set with `wrangler secret put`):
-  //   LLM_API_KEY
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "atoms-demo",
+	"main": "worker/index.ts",
+	"compatibility_date": "2025-06-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"directory": "./dist",
+		"not_found_handling": "single-page-application",
+		"binding": "ASSETS",
+		"run_worker_first": [
+			"/api/*",
+			"/raw/*"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "atoms-demo",
+			"database_id": "11cae431-a955-487f-9046-39c824737683",
+			"migrations_dir": "migrations"
+		}
+	],
+	"vars": {
+		// OpenAI-compatible endpoint. Works for OpenAI, DeepSeek, Gemini (openai/ path), Groq, etc.
+		// Default: Gemini via its OpenAI-compatible endpoint (free tier friendly).
+		"LLM_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai",
+		// Builder writes the app with this model…
+		"LLM_MODEL": "gemini-3.5-flash",
+		// …Planner and Reviewer use the cheaper one to save quota.
+		"LLM_MODEL_FAST": "gemini-3.5-flash-lite",
+		// Per-user generation cap per UTC day, to bound API spend during review.
+		"DAILY_GEN_LIMIT": "10",
+		// All users combined per UTC day — protects the free-tier model quota.
+		"GLOBAL_DAILY_GEN_LIMIT": "60"
+	},
+	"observability": {
+		"enabled": true
+	}
+	// Secrets (set with `wrangler secret put`):
+	//   LLM_API_KEY
 }
