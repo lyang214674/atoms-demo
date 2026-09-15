@@ -33,7 +33,7 @@ LLM          任意 OpenAI 兼容接口（OpenAI / DeepSeek / Gemini / Groq …�
 
 - **Agent 流水线**：三个角色是三次带系统提示词的模型调用，共享同一份「计划」作为上下文，中间产物全部写入 D1（`agent_events` 可回放）。Planner 输出等用户确认后才进入 Builder，对应 Atoms 里「Team Leader 在关键节点等人批准」的思路。
 - **生成物运行**：单文件 HTML，允许 Tailwind CDN 与 Google Fonts，其余外部脚本会被 Reviewer 标记。预览用 `iframe sandbox="allow-scripts"`（不给 `allow-same-origin`），`/raw/*` 响应额外加 `Content-Security-Policy: sandbox`，生成物拿不到访问者的 Cookie。
-- **成本护栏**：每用户每天生成次数上限（`DAILY_GEN_LIMIT`），API Key 只存在服务端 Secret。
+- **成本护栏**：默认走 Gemini 免费额度——Builder 用 `gemini-3.5-flash`，Planner / Reviewer 用更便宜的 `gemini-3.5-flash-lite`（`LLM_MODEL_FAST`）；429/503 自动退避重试；每用户每日上限（`DAILY_GEN_LIMIT`=10）+ 全站每日总上限（`GLOBAL_DAILY_GEN_LIMIT`=60）；API Key 只存在服务端 Secret。
 
 ## 关键取舍
 
@@ -80,7 +80,11 @@ npx wrangler secret put LLM_API_KEY
 npm run deploy                        # 输出 https://atoms-demo.<subdomain>.workers.dev
 ```
 
-如需换模型，改 `wrangler.jsonc` 的 `LLM_BASE_URL` / `LLM_MODEL`（例如 DeepSeek：`https://api.deepseek.com/v1` + `deepseek-chat`）。
+如需换模型，改 `wrangler.jsonc` 的 `LLM_BASE_URL` / `LLM_MODEL` / `LLM_MODEL_FAST`（例如 DeepSeek：`https://api.deepseek.com/v1` + `deepseek-chat`）。
+
+## 实测（本地，Gemini 3.5）
+
+输入「做一个番茄钟，可以设置专注时长，记录今天完成了几个番茄」：Planner 2s 出计划 → Builder 42s 生成 28.6K 字符单文件 HTML → Reviewer 11 项检查全部通过 → 分享 → 另一账号 Remix 成功。一次完整生成消耗 3 次模型调用。
 
 ## 使用的 AI 工具
 
