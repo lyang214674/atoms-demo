@@ -202,7 +202,7 @@ app.post("/api/versions/:vid/plan", async (c) => {
           { role: "system", content: PLANNER_SYSTEM },
           { role: "user", content: plannerUser(version.user_message, prev ? { plan: prev.plan, message: version.user_message } : undefined) },
         ],
-        { temperature: 0.3, maxTokens: 1500 },
+        { temperature: 0.3, maxTokens: 1500, tier: "fast" },
       )) {
         raw += t;
         await send({ type: "token", role: "planner", text: t });
@@ -236,10 +236,11 @@ app.post("/api/versions/:vid/build", async (c) => {
   const body = await c.req.json<{ plan?: Plan }>().catch(() => ({} as { plan?: Plan }));
   const plan = body.plan ?? version.plan;
   if (!plan) throw new HttpError(400, "请先生成计划");
-  const limit = Number(c.env.DAILY_GEN_LIMIT || "30");
-  if (!(await db.consumeDailyQuota(c.env.DB, userId, limit))) {
-    throw new HttpError(429, `今天的生成次数已用完（每日 ${limit} 次），明天再来`);
-  }
+  const limit = Number(c.env.DAILY_GEN_LIMIT || "10");
+  const globalLimit = Number(c.env.GLOBAL_DAILY_GEN_LIMIT || "60");
+  const quota = await db.consumeDailyQuota(c.env.DB, userId, limit, globalLimit);
+  if (quota === "user") throw new HttpError(429, `今天的生成次数已用完（每人每日 ${limit} 次），明天再来`);
+  if (quota === "global") throw new HttpError(429, "Demo 今日的总生成额度已用完（免费模型额度有限），明天再来");
   const prev = version.n > 1 ? await db.previousVersion(c.env.DB, project.id, version.n) : null;
 
   return streamSSE(c, async (stream) => {
@@ -256,7 +257,7 @@ app.post("/api/versions/:vid/build", async (c) => {
           { role: "system", content: BUILDER_SYSTEM },
           { role: "user", content: builderUser(plan, prev?.html ? { previousHtml: prev.html, message: version.user_message } : undefined) },
         ],
-        { temperature: 0.4, maxTokens: 12000 },
+        { temperature: 0.4, maxTokens: 30000 },
       )) {
         raw += t;
         await send({ type: "token", role: "builder", text: t });
@@ -284,7 +285,7 @@ app.post("/api/versions/:vid/build", async (c) => {
             { role: "system", content: REVIEWER_SYSTEM },
             { role: "user", content: reviewerUser(plan, html.slice(0, 60000)) },
           ],
-          { temperature: 0.1, maxTokens: 800 },
+          { temperature: 0.1, maxTokens: 800, tier: "fast" },
         );
         const modelReview = extractJson<Review>(reviewRaw);
         if (modelReview && Array.isArray(modelReview.checks)) {

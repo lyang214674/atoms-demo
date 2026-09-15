@@ -137,20 +137,24 @@ export async function listEvents(db: D1Database, versionId: string): Promise<Age
   return results;
 }
 
-/** Returns false if the user exceeded today's generation quota. */
-export async function consumeDailyQuota(db: D1Database, userId: string, limit: number) {
+/**
+ * Returns "ok" | "user" | "global". Two caps guard the free LLM quota:
+ * a per-user daily cap and a global (all users) daily cap.
+ */
+export async function consumeDailyQuota(db: D1Database, userId: string, limit: number, globalLimit: number) {
   const day = todayUTC();
-  const row = await db
-    .prepare("SELECT count FROM usage_daily WHERE user_id = ? AND day = ?")
-    .bind(userId, day)
-    .first<{ count: number }>();
+  const [row, total] = await Promise.all([
+    db.prepare("SELECT count FROM usage_daily WHERE user_id = ? AND day = ?").bind(userId, day).first<{ count: number }>(),
+    db.prepare("SELECT COALESCE(SUM(count), 0) AS total FROM usage_daily WHERE day = ?").bind(day).first<{ total: number }>(),
+  ]);
+  if ((total?.total ?? 0) >= globalLimit) return "global" as const;
   const count = row?.count ?? 0;
-  if (count >= limit) return false;
+  if (count >= limit) return "user" as const;
   await db
     .prepare(
       "INSERT INTO usage_daily (user_id, day, count) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1",
     )
     .bind(userId, day)
     .run();
-  return true;
+  return "ok" as const;
 }

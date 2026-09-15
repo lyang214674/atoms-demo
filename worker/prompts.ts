@@ -22,7 +22,8 @@ Hard rules:
 - Must be fully interactive and functional: every button and input in the plan works. No placeholder "TODO" text, no lorem ipsum.
 - Responsive layout that works at 375px and 1280px widths. Include an empty state when there is no data.
 - Handle errors gracefully; never leave the page blank.
-- The <title> must be the app name.`;
+- The <title> must be the app name.
+Size budget (strict): the whole file must stay under 20,000 characters. Use Tailwind utility classes instead of custom CSS wherever possible, write compact JavaScript, and do NOT add code comments or explanatory HTML comments. Finish the document — an unfinished file is a failure.`;
 
 export const REVIEWER_SYSTEM = `You are the Reviewer agent. You check a generated single-file HTML app against its plan.
 Reply with ONLY a JSON object:

@@ -20,10 +20,16 @@
   ],
   "vars": {
     // OpenAI-compatible endpoint. Works for OpenAI, DeepSeek, Gemini (openai/ path), Groq, etc.
-    "LLM_BASE_URL": "https://api.openai.com/v1",
-    "LLM_MODEL": "gpt-4o-mini",
+    // Default: Gemini via its OpenAI-compatible endpoint (free tier friendly).
+    "LLM_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai",
+    // Builder writes the app with this model…
+    "LLM_MODEL": "gemini-3.5-flash",
+    // …Planner and Reviewer use the cheaper one to save quota.
+    "LLM_MODEL_FAST": "gemini-3.5-flash-lite",
     // Per-user generation cap per UTC day, to bound API spend during review.
-    "DAILY_GEN_LIMIT": "30"
+    "DAILY_GEN_LIMIT": "10",
+    // All users combined per UTC day — protects the free-tier model quota.
+    "GLOBAL_DAILY_GEN_LIMIT": "60"
   },
   "observability": { "enabled": true }
   // Secrets (set with `wrangler secret put`):
