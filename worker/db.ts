@@ -158,3 +158,11 @@ export async function consumeDailyQuota(db: D1Database, userId: string, limit: n
     .run();
   return "ok" as const;
 }
+
+/** Give back one generation after a failed build. */
+export async function refundDailyQuota(db: D1Database, userId: string) {
+  await db
+    .prepare("UPDATE usage_daily SET count = MAX(count - 1, 0) WHERE user_id = ? AND day = ?")
+    .bind(userId, todayUTC())
+    .run();
+}

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { Env, Vars } from "./env";
 import { createSession, destroySession, hashPassword, resolveUser, verifyPassword } from "./auth";
-import { chat, streamChat } from "./llm";
+import { chat, providerOf, streamChat } from "./llm";
 import {
   BUILDER_SYSTEM,
   PLANNER_SYSTEM,
@@ -308,6 +308,8 @@ app.post("/api/versions/:vid/build", async (c) => {
       const message = err instanceof Error ? err.message : String(err);
       await db.updateVersion(c.env.DB, version.id, { status: "failed" });
       await db.logEvent(c.env.DB, version.id, "builder", "error", message);
+      // A failed build should not eat the user's daily quota.
+      await db.refundDailyQuota(c.env.DB, userId).catch(() => {});
       await send({ type: "error", message });
     } finally {
       await send({ type: "end" });
@@ -370,7 +372,14 @@ app.get("/raw/v/:vid", async (c) => {
   return new Response(version.html, { headers: RAW_HEADERS });
 });
 
-app.get("/api/health", (c) => c.json({ ok: true, model: c.env.LLM_MODEL, hasKey: Boolean(c.env.LLM_API_KEY) }));
+app.get("/api/health", (c) =>
+  c.json({
+    ok: true,
+    provider: providerOf(c.env),
+    model: c.env.LLM_MODEL,
+    ready: providerOf(c.env) === "workers-ai" ? Boolean(c.env.AI) : Boolean(c.env.LLM_API_KEY),
+  }),
+);
 
 // Anything else under /api is 404 JSON; other paths fall through to static assets (SPA).
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));

@@ -20,8 +20,11 @@ export function isEmail(s: string) {
 }
 
 /** Strip ```html fences and any prose before <!doctype/<html. */
+/** Reasoning models may prepend a <think>…</think> block; drop it. */
+const stripThink = (s: string) => s.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
 export function extractHtml(raw: string): string {
-  let s = raw.trim();
+  let s = stripThink(raw);
   const fence = s.match(/```(?:html)?\s*([\s\S]*?)```/i);
   if (fence) s = fence[1].trim();
   const start = s.search(/<!doctype html|<html[\s>]/i);
@@ -33,7 +36,7 @@ export function extractHtml(raw: string): string {
 
 /** Parse the first JSON object in a model reply. */
 export function extractJson<T>(raw: string): T | null {
-  let s = raw.trim();
+  let s = stripThink(raw);
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) s = fence[1].trim();
   const start = s.indexOf("{");

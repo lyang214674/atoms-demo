@@ -370,7 +370,13 @@ export default function Workspace() {
             html={previewHtml}
             building={isBuilding}
             rawUrl={selected?.html ? `/raw/v/${selected.id}` : null}
-            emptyHint={selected?.status === "planning" ? "Planner 正在拆解需求…" : undefined}
+            emptyHint={
+              selected?.status === "failed"
+                ? "这一版生成失败了，原因见左侧时间线。点「重新构建」再来一次，失败不扣配额。"
+                : selected?.status === "planning"
+                  ? "Planner 正在拆解需求…"
+                  : undefined
+            }
           />
         </div>
       </section>
