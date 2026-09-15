@@ -15,6 +15,14 @@ import {
 import * as db from "./db";
 import { extractHtml, extractJson, isEmail, now, slug, uid } from "./util";
 import type { GalleryItem, Plan, Review, StreamEvent, User } from "../shared/types";
+import { injectStorageShim } from "../shared/storageShim";
+
+/** Model review is best-effort; never let it hold a finished build hostage. */
+const REVIEW_TIMEOUT_MS = 30_000;
+/** A "building" version with no agent event for this long is considered dead. */
+const STALE_BUILD_MS = 4 * 60_000;
+const withTimeout = <T>(p: Promise<T>, ms: number, label: string) =>
+  Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${label} timed out after ${ms / 1000}s`)), ms))]);
 
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 
@@ -105,7 +113,22 @@ app.get("/api/projects/:id", async (c) => {
   const userId = requireUser(c);
   const project = await db.getProject(c.env.DB, c.req.param("id"));
   if (!project || project.user_id !== userId) throw new HttpError(404, "项目不存在");
-  const versions = await db.listVersions(c.env.DB, project.id);
+  let versions = await db.listVersions(c.env.DB, project.id);
+  // Recovery: a version stuck in "building" with no agent activity for a while means the
+  // stream died (worker evicted, client gone). Mark it failed so the user can retry.
+  const stale = versions.filter((v) => v.status === "building");
+  if (stale.length) {
+    let changed = false;
+    for (const v of stale) {
+      const last = await db.lastEventTs(c.env.DB, v.id);
+      if (now() - (last ?? v.created_at) > STALE_BUILD_MS) {
+        await db.updateVersion(c.env.DB, v.id, { status: "failed" });
+        await db.logEvent(c.env.DB, v.id, "system", "error", "构建超时中断，请重新构建");
+        changed = true;
+      }
+    }
+    if (changed) versions = await db.listVersions(c.env.DB, project.id);
+  }
   return c.json({ project, versions });
 });
 
@@ -245,6 +268,7 @@ app.post("/api/versions/:vid/build", async (c) => {
 
   return streamSSE(c, async (stream) => {
     const send = (e: StreamEvent) => stream.writeSSE({ data: JSON.stringify(e) });
+    let built = false;
     try {
       await db.updateVersion(c.env.DB, version.id, { plan, status: "building" });
       await db.logEvent(c.env.DB, version.id, "builder", "start", plan.app_name);
@@ -264,28 +288,37 @@ app.post("/api/versions/:vid/build", async (c) => {
       }
       const html = extractHtml(raw);
       if (!/<html[\s>]/i.test(html) || !/<\/html>/i.test(html)) throw new Error("Builder 没有返回完整的 HTML，请重试");
-      await db.updateVersion(c.env.DB, version.id, { html });
-      await db.logEvent(c.env.DB, version.id, "builder", "done", `${html.length} chars`);
-      await send({ type: "html", html });
-      await send({ type: "step_done", role: "builder", label: "代码已生成" });
 
-      // Reviewer: static checks always; model review best-effort.
-      await db.logEvent(c.env.DB, version.id, "reviewer", "start");
-      await send({ type: "step_start", role: "reviewer", label: "Reviewer 正在检查功能与质量" });
+      // Static checks are deterministic and instant; persist them together with the
+      // HTML and mark the version done *now*, so a slow/failed model review can never
+      // leave the version stuck in "building".
       const checks = staticChecks(html);
       let review: Review = {
         verdict: checks.every((k) => k.ok) ? "pass" : "warn",
         checks,
         notes: "已完成静态检查。",
       };
+      await db.updateVersion(c.env.DB, version.id, { html, review, status: "done" });
+      built = true;
+      await db.logEvent(c.env.DB, version.id, "builder", "done", `${html.length} chars`);
+      await send({ type: "html", html });
+      await send({ type: "step_done", role: "builder", label: "代码已生成" });
+
+      // Reviewer: model review is best-effort and time-boxed.
+      await db.logEvent(c.env.DB, version.id, "reviewer", "start");
+      await send({ type: "step_start", role: "reviewer", label: "Reviewer 正在检查功能与质量" });
       try {
-        const reviewRaw = await chat(
-          c.env,
-          [
-            { role: "system", content: REVIEWER_SYSTEM },
-            { role: "user", content: reviewerUser(plan, html.slice(0, 60000)) },
-          ],
-          { temperature: 0.1, maxTokens: 800, tier: "fast" },
+        const reviewRaw = await withTimeout(
+          chat(
+            c.env,
+            [
+              { role: "system", content: REVIEWER_SYSTEM },
+              { role: "user", content: reviewerUser(plan, html.slice(0, 60000)) },
+            ],
+            { temperature: 0.1, maxTokens: 800, tier: "fast" },
+          ),
+          REVIEW_TIMEOUT_MS,
+          "Reviewer",
         );
         const modelReview = extractJson<Review>(reviewRaw);
         if (modelReview && Array.isArray(modelReview.checks)) {
@@ -306,11 +339,18 @@ app.post("/api/versions/:vid/build", async (c) => {
       await send({ type: "version", version: (await db.getVersion(c.env.DB, version.id))! });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await db.updateVersion(c.env.DB, version.id, { status: "failed" });
-      await db.logEvent(c.env.DB, version.id, "builder", "error", message);
-      // A failed build should not eat the user's daily quota.
-      await db.refundDailyQuota(c.env.DB, userId).catch(() => {});
-      await send({ type: "error", message });
+      if (built) {
+        // HTML is already saved and usable; only the review phase failed.
+        await db.logEvent(c.env.DB, version.id, "reviewer", "error", message);
+        await send({ type: "step_done", role: "reviewer", label: "审查未完成，已保留静态检查" });
+        await send({ type: "version", version: (await db.getVersion(c.env.DB, version.id))! });
+      } else {
+        await db.updateVersion(c.env.DB, version.id, { status: "failed" });
+        await db.logEvent(c.env.DB, version.id, "builder", "error", message);
+        // A failed build should not eat the user's daily quota.
+        await db.refundDailyQuota(c.env.DB, userId).catch(() => {});
+        await send({ type: "error", message });
+      }
     } finally {
       await send({ type: "end" });
     }
@@ -363,13 +403,13 @@ app.get("/raw/s/:slug", async (c) => {
   const project = await db.getProjectBySlug(c.env.DB, c.req.param("slug"));
   const v = project ? await db.latestDoneVersion(c.env.DB, project.id) : null;
   if (!v?.html) return c.text("Not found", 404);
-  return new Response(v.html, { headers: RAW_HEADERS });
+  return new Response(injectStorageShim(v.html), { headers: RAW_HEADERS });
 });
 
 app.get("/raw/v/:vid", async (c) => {
   const { version } = await ownedVersion(c, c.req.param("vid"));
   if (!version.html) return c.text("Not found", 404);
-  return new Response(version.html, { headers: RAW_HEADERS });
+  return new Response(injectStorageShim(version.html), { headers: RAW_HEADERS });
 });
 
 app.get("/api/health", (c) =>

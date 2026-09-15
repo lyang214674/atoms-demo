@@ -1,20 +1,64 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { STORAGE_MSG_TYPE, injectStorageShim } from "../../shared/storageShim";
 
 type Device = "desktop" | "mobile";
+
+const storeKey = (k: string) => `atoms:appdata:${k}`;
+
+function loadAppData(k: string): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(storeKey(k));
+    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
 
 export function Preview({
   html,
   rawUrl,
   building,
   emptyHint,
+  storageKey,
 }: {
   html: string | null;
   rawUrl?: string | null;
   building?: boolean;
   emptyHint?: string;
+  /** Namespace for the generated app's persisted data (e.g. project id). */
+  storageKey?: string;
 }) {
   const [device, setDevice] = useState<Device>("desktop");
   const [nonce, setNonce] = useState(0);
+
+  // The generated app's localStorage lives in *our* localStorage, namespaced per project.
+  useEffect(() => {
+    if (!storageKey) return;
+    const onMsg = (ev: MessageEvent) => {
+      const d = ev.data as { type?: string; data?: Record<string, string> } | null;
+      if (!d || d.type !== STORAGE_MSG_TYPE || !d.data) return;
+      try {
+        localStorage.setItem(storeKey(storageKey), JSON.stringify(d.data));
+      } catch {
+        // storage full / disabled — ignore
+      }
+    };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, [storageKey]);
+
+  const doc = useMemo(() => {
+    if (!html) return null;
+    return injectStorageShim(html, storageKey ? loadAppData(storageKey) : {});
+    // nonce is intentionally a dependency: "刷新" should re-read persisted data.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [html, storageKey, nonce]);
+
+  const resetData = () => {
+    if (!storageKey) return;
+    localStorage.removeItem(storeKey(storageKey));
+    setNonce((n) => n + 1);
+  };
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
@@ -35,6 +79,11 @@ export function Preview({
           <button onClick={() => setNonce((n) => n + 1)} className={chip(false)} title="重新加载预览" disabled={!html}>
             刷新
           </button>
+          {storageKey && (
+            <button onClick={resetData} className={chip(false)} title="清空这个应用保存的数据" disabled={!html}>
+              清空数据
+            </button>
+          )}
           {rawUrl && html && (
             <a href={rawUrl} target="_blank" rel="noreferrer" className={chip(false)} title="在新标签页全屏打开">
               新标签打开
@@ -43,12 +92,12 @@ export function Preview({
         </div>
       </div>
       <div className="relative flex flex-1 items-stretch justify-center overflow-hidden bg-[radial-gradient(circle_at_1px_1px,rgb(30_41_59)_1px,transparent_0)] [background-size:16px_16px]">
-        {html ? (
+        {doc ? (
           <iframe
             key={nonce}
             title="生成的应用预览"
             sandbox="allow-scripts allow-forms allow-modals allow-popups"
-            srcDoc={html}
+            srcDoc={doc}
             className={`h-full bg-white transition-all ${device === "mobile" ? "my-3 w-[375px] rounded-2xl border border-slate-700 shadow-xl" : "w-full"}`}
           />
         ) : (

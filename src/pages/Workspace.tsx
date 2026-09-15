@@ -288,8 +288,11 @@ export default function Workspace() {
                   开始规划
                 </button>
               )}
-              {!running && selected.status === "failed" && (
-                <div className="flex gap-2">
+              {!running && (selected.status === "failed" || selected.status === "building") && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {selected.status === "building" && (
+                    <span className="text-xs text-amber-400">上次构建连接中断，可以直接重新构建（不额外扣配额）</span>
+                  )}
                   <button onClick={() => runPlan(selected.id)} className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800">
                     重新规划
                   </button>
@@ -370,6 +373,7 @@ export default function Workspace() {
             html={previewHtml}
             building={isBuilding}
             rawUrl={selected?.html ? `/raw/v/${selected.id}` : null}
+            storageKey={project?.id}
             emptyHint={
               selected?.status === "failed"
                 ? "这一版生成失败了，原因见左侧时间线。点「重新构建」再来一次，失败不扣配额。"

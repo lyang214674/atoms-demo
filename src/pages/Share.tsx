@@ -87,7 +87,7 @@ export default function Share() {
         <p className="text-xs text-slate-500">Remix 会把这个版本复制到你的账号，你可以继续用对话修改它。</p>
       </aside>
       <div className="h-[75vh] min-h-[480px]">
-        <Preview html={data.version.html} rawUrl={`/raw/s/${slug}`} />
+        <Preview html={data.version.html} rawUrl={`/raw/s/${slug}`} storageKey={`share:${slug}`} />
       </div>
     </div>
   );

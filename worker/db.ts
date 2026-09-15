@@ -159,6 +159,11 @@ export async function consumeDailyQuota(db: D1Database, userId: string, limit: n
   return "ok" as const;
 }
 
+export async function lastEventTs(db: D1Database, versionId: string) {
+  const row = await db.prepare("SELECT MAX(ts) AS ts FROM agent_events WHERE version_id = ?").bind(versionId).first<{ ts: number | null }>();
+  return row?.ts ?? null;
+}
+
 /** Give back one generation after a failed build. */
 export async function refundDailyQuota(db: D1Database, userId: string) {
   await db
