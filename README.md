@@ -69,6 +69,8 @@ Workers AI    @cf/google/gemma-4-26b-a4b-it（可切换任意 OpenAI 兼容接�
 
 生成的 HTML 是不可信代码。预览用 `iframe sandbox="allow-scripts allow-forms allow-modals allow-popups"`（不给 `allow-same-origin`），`/raw/*` 响应再加一层 `Content-Security-Policy: sandbox`，因此生成物拿不到访问者的 Cookie，也不能以站点源身份发请求。
 
+代价是：不透明源下浏览器会禁止 `localStorage`，而生成的应用几乎都靠它持久化。解决办法是在生成物 `<head>` 顶部注入一段垫片（`shared/storageShim.ts`）：原生存储不可用时切到内存实现，并通过 `postMessage` 把每次变更同步给父页面，父页面按项目存进自己的 localStorage，下次加载时回灌。既保住隔离边界，也保住"刷新不丢数据"，预览栏还提供「清空数据」。
+
 ### 3.4 成本与稳定性护栏
 
 - 线上默认用 **Cloudflare Workers AI**：与 Worker 同平台、无地区限制、无需 API Key、每天 10,000 neurons 免费；一次完整生成（规划 + 构建 + 审查）约 300 neurons
@@ -102,7 +104,7 @@ Workers AI    @cf/google/gemma-4-26b-a4b-it（可切换任意 OpenAI 兼容接�
 - 预览：沙箱 iframe、桌面 / 手机宽度、全屏、新标签打开原始 HTML
 - 迭代：对话式修改生成新版本、版本列表与切换、失败后重新规划 / 重新构建
 - 分发：分享 / 取消分享、公开分享页、Remix 到自己账号、首页作品墙
-- 工程：每日配额（失败退回）、429/503 重试、空态与错误提示、CSP 隔离、D1 迁移脚本、一条命令部署
+- 工程：每日配额（失败退回）、429/503 重试、Reviewer 超时不阻塞产物、中断构建自动恢复为可重试、空态与错误提示、CSP 隔离 + 存储垫片、D1 迁移脚本、一条命令部署
 
 **部分完成**
 
