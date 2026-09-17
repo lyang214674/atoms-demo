@@ -371,7 +371,7 @@ export default function Workspace() {
       </section>
 
       {/* right: preview / code */}
-      <section className="flex min-h-[480px] flex-col gap-3">
+      <section className="flex min-h-[480px] min-w-0 flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <div className="flex rounded-md border border-slate-700 p-0.5 text-xs">
             <button
@@ -416,7 +416,7 @@ export default function Workspace() {
             )}
           </div>
         </div>
-        <div className="min-h-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1">
           {pane === "code" && selected?.html && !isBuilding ? (
             <CodeView html={selected.html} fileName={`${fileSlug(selected.plan?.app_name || project.title)}-v${selected.n}.html`} />
           ) : (

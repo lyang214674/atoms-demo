@@ -21,7 +21,7 @@ export function CodeView({ html, fileName }: { html: string; fileName: string })
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
       <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-2 text-xs text-slate-400">
         <span className="mono truncate">{fileName}</span>
         <span className="text-slate-600">
