@@ -14,6 +14,7 @@ import {
 } from "./prompts";
 import * as db from "./db";
 import { extractHtml, extractJson, isEmail, now, slug, uid } from "./util";
+import { originAllowed, triagePrompt } from "./policy";
 import type { GalleryItem, Plan, Review, StreamEvent, User } from "../shared/types";
 import { injectStorageShim } from "../shared/storageShim";
 
@@ -26,11 +27,24 @@ const withTimeout = <T>(p: Promise<T>, ms: number, label: string) =>
 
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 
-// ---------- auth middleware ----------
+// ---------- request guards ----------
+app.use("/api/*", async (c, next) => {
+  // State-changing requests must come from our own origin (CSRF guard).
+  if (c.req.method !== "GET" && c.req.method !== "HEAD" && !originAllowed(c.req.header("origin"), c.req.url)) {
+    return c.json({ error: "请求来源不匹配" }, 403);
+  }
+  // Bound request bodies so a client can't push megabytes at D1 or the model.
+  if (Number(c.req.header("content-length") ?? 0) > 200_000) return c.json({ error: "请求体过大" }, 413);
+  await next();
+});
+
 app.use("*", async (c, next) => {
   c.set("userId", await resolveUser(c));
   await next();
 });
+
+const clientIp = (c: { req: { header: (k: string) => string | undefined } }) =>
+  c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
 
 const requireUser = (c: { get: (k: "userId") => string | null }) => {
   const id = c.get("userId");
@@ -52,6 +66,7 @@ app.onError((err, c) => {
 
 // ---------- auth ----------
 app.post("/api/auth/register", async (c) => {
+  if (await db.authThrottled(c.env.DB, `register:${clientIp(c)}`)) throw new HttpError(429, "注册过于频繁，请 15 分钟后再试");
   const { email, password } = await c.req.json<{ email?: string; password?: string }>();
   const e = (email ?? "").trim().toLowerCase();
   if (!isEmail(e)) throw new HttpError(400, "邮箱格式不正确");
@@ -68,6 +83,7 @@ app.post("/api/auth/register", async (c) => {
 });
 
 app.post("/api/auth/login", async (c) => {
+  if (await db.authThrottled(c.env.DB, `login:${clientIp(c)}`)) throw new HttpError(429, "尝试次数过多，请 15 分钟后再试");
   const { email, password } = await c.req.json<{ email?: string; password?: string }>();
   const e = (email ?? "").trim().toLowerCase();
   const row = await c.env.DB.prepare("SELECT id, email, password_hash, salt, created_at FROM users WHERE email = ?")
@@ -102,8 +118,10 @@ app.post("/api/projects", async (c) => {
   const userId = requireUser(c);
   const { prompt } = await c.req.json<{ prompt?: string }>();
   const p = (prompt ?? "").trim();
-  if (p.length < 4) throw new HttpError(400, "再多描述一点你想做的应用");
   if (p.length > 2000) throw new HttpError(400, "描述太长了（最多 2000 字）");
+  // Triage before spending a model call: questions and vague prompts get a nudge, not a project.
+  const triage = triagePrompt(p);
+  if (triage.kind === "clarify") throw new HttpError(422, triage.message);
   const project = await db.createProject(c.env.DB, userId, p);
   const version = await db.createVersion(c.env.DB, project.id, p);
   return c.json({ project, version });
@@ -162,6 +180,19 @@ app.post("/api/projects/:id/iterate", async (c) => {
   const m = (message ?? "").trim();
   if (m.length < 2) throw new HttpError(400, "说说你想改什么");
   const version = await db.createVersion(c.env.DB, project.id, m);
+  return c.json({ version });
+});
+
+/** Restore: copy an earlier version's output into a new head version (no model call). */
+app.post("/api/projects/:id/versions/:vid/restore", async (c) => {
+  const userId = requireUser(c);
+  const project = await db.getProject(c.env.DB, c.req.param("id"));
+  if (!project || project.user_id !== userId) throw new HttpError(404, "项目不存在");
+  const source = await db.getVersion(c.env.DB, c.req.param("vid"));
+  if (!source || source.project_id !== project.id) throw new HttpError(404, "版本不存在");
+  if (source.status !== "done" || !source.html) throw new HttpError(400, "只能恢复已完成的版本");
+  const version = await db.createVersionFrom(c.env.DB, project.id, source, `恢复自 v${source.n}`);
+  await db.logEvent(c.env.DB, version.id, "system", "done", `从 v${source.n} 恢复，未调用模型`);
   return c.json({ version });
 });
 

@@ -6,6 +6,14 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	// Custom domain (DNS + TLS are provisioned by Cloudflare on deploy). workers.dev stays on as a fallback.
+	"workers_dev": true,
+	"routes": [
+		{
+			"pattern": "atoms.aihunter.space",
+			"custom_domain": true
+		}
+	],
 	"assets": {
 		"directory": "./dist",
 		"not_found_handling": "single-page-application",

@@ -1,5 +1,6 @@
 import type { AgentEvent, AgentRole, Plan, Project, ProjectSummary, Review, Version, VersionStatus } from "../shared/types";
 import { now, todayUTC, uid } from "./util";
+import { AUTH_ATTEMPT_SQL, AUTH_MAX_ATTEMPTS, QUOTA_RESERVE_SQL, authAttemptArgs, quotaReserveArgs } from "./policy";
 
 type VersionRow = {
   id: string;
@@ -139,24 +140,50 @@ export async function listEvents(db: D1Database, versionId: string): Promise<Age
 
 /**
  * Returns "ok" | "user" | "global". Two caps guard the free LLM quota:
- * a per-user daily cap and a global (all users) daily cap.
+ * a per-user daily cap and a global (all users) daily cap. The reservation is a
+ * single atomic statement; the follow-up read only decides which message to show.
  */
 export async function consumeDailyQuota(db: D1Database, userId: string, limit: number, globalLimit: number) {
   const day = todayUTC();
-  const [row, total] = await Promise.all([
-    db.prepare("SELECT count FROM usage_daily WHERE user_id = ? AND day = ?").bind(userId, day).first<{ count: number }>(),
-    db.prepare("SELECT COALESCE(SUM(count), 0) AS total FROM usage_daily WHERE day = ?").bind(day).first<{ total: number }>(),
-  ]);
-  if ((total?.total ?? 0) >= globalLimit) return "global" as const;
-  const count = row?.count ?? 0;
-  if (count >= limit) return "user" as const;
+  const res = await db
+    .prepare(QUOTA_RESERVE_SQL)
+    .bind(...quotaReserveArgs(userId, day, limit, globalLimit))
+    .run();
+  if (res.meta.changes > 0) return "ok" as const;
+  const total = await db.prepare("SELECT COALESCE(SUM(count), 0) AS total FROM usage_daily WHERE day = ?").bind(day).first<{ total: number }>();
+  return (total?.total ?? 0) >= globalLimit ? ("global" as const) : ("user" as const);
+}
+
+/** Count one login/registration attempt for `key`; true when over the limit. */
+export async function authThrottled(db: D1Database, key: string) {
+  const row = await db.prepare(AUTH_ATTEMPT_SQL).bind(...authAttemptArgs(key, now())).first<{ count: number }>();
+  return (row?.count ?? 0) > AUTH_MAX_ATTEMPTS;
+}
+
+/** Create a new version that copies plan/html/review from an existing one (restore / branch). */
+export async function createVersionFrom(db: D1Database, projectId: string, source: Version, userMessage: string) {
+  const nRow = await db
+    .prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM versions WHERE project_id = ?")
+    .bind(projectId)
+    .first<{ n: number }>();
+  const id = uid();
   await db
     .prepare(
-      "INSERT INTO usage_daily (user_id, day, count) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1",
+      "INSERT INTO versions (id, project_id, n, user_message, plan_json, html, review_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'done', ?)",
     )
-    .bind(userId, day)
+    .bind(
+      id,
+      projectId,
+      nRow!.n,
+      userMessage,
+      source.plan ? JSON.stringify(source.plan) : null,
+      source.html,
+      source.review ? JSON.stringify(source.review) : null,
+      now(),
+    )
     .run();
-  return "ok" as const;
+  await touchProject(db, projectId);
+  return (await getVersion(db, id))!;
 }
 
 export async function lastEventTs(db: D1Database, versionId: string) {

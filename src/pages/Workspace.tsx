@@ -5,6 +5,7 @@ import { api, streamAgent } from "../api";
 import { AgentTimeline, ReviewList, type TimelineStep } from "../components/AgentTimeline";
 import { PlanCard } from "../components/PlanCard";
 import { Preview } from "../components/Preview";
+import { CodeView } from "../components/CodeView";
 
 export default function Workspace() {
   const { id = "" } = useParams();
@@ -24,6 +25,8 @@ export default function Workspace() {
   const [runVersionId, setRunVersionId] = useState<string | null>(null);
 
   const [message, setMessage] = useState("");
+  const [pane, setPane] = useState<"preview" | "code">("preview");
+  const [restoring, setRestoring] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -167,6 +170,23 @@ export default function Workspace() {
     }
   }
 
+  async function restore(vid: string) {
+    if (running || restoring) return;
+    setRestoring(true);
+    setErr(null);
+    try {
+      const { version } = await api.restoreVersion(id, vid);
+      upsertVersion(version);
+      setSelectedId(version.id);
+      setSteps([]);
+      setRunVersionId(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "恢复失败");
+    } finally {
+      setRestoring(false);
+    }
+  }
+
   async function share() {
     setShareBusy(true);
     try {
@@ -262,6 +282,19 @@ export default function Workspace() {
                 </div>
               )}
 
+              {!running && selected.status === "done" && selected.html && selected.id !== latest?.id && (
+                <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs">
+                  <span className="flex-1 text-slate-400">正在查看旧版本。喜欢这一版？把它恢复为最新版本，后续修改都基于它。</span>
+                  <button
+                    onClick={() => restore(selected.id)}
+                    disabled={restoring}
+                    className="rounded-md border border-slate-600 px-2.5 py-1 text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+                  >
+                    {restoring ? "恢复中…" : `恢复 v${selected.n} 为最新`}
+                  </button>
+                </div>
+              )}
+
               {showingRun && steps.length > 0 && (
                 <AgentTimeline steps={steps} liveRole={liveRole} liveText={liveText} review={liveReview} />
               )}
@@ -337,11 +370,26 @@ export default function Workspace() {
         </form>
       </section>
 
-      {/* right: preview */}
+      {/* right: preview / code */}
       <section className="flex min-h-[480px] flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
+          <div className="flex rounded-md border border-slate-700 p-0.5 text-xs">
+            <button
+              onClick={() => setPane("preview")}
+              className={`rounded px-2.5 py-1 ${pane === "preview" ? "bg-slate-700 text-white" : "text-slate-400 hover:text-white"}`}
+            >
+              预览
+            </button>
+            <button
+              onClick={() => setPane("code")}
+              disabled={!selected?.html}
+              className={`rounded px-2.5 py-1 disabled:opacity-40 ${pane === "code" ? "bg-slate-700 text-white" : "text-slate-400 hover:text-white"}`}
+            >
+              代码
+            </button>
+          </div>
           <span className="text-slate-400">
-            预览 {selected ? `v${selected.n}` : ""} {isBuilding && <span className="text-sky-400">· 构建中</span>}
+            {selected ? `v${selected.n}` : ""} {isBuilding && <span className="text-sky-400">· 构建中</span>}
           </span>
           <div className="ml-auto flex items-center gap-2">
             {project.share_slug ? (
@@ -369,6 +417,9 @@ export default function Workspace() {
           </div>
         </div>
         <div className="min-h-0 flex-1">
+          {pane === "code" && selected?.html && !isBuilding ? (
+            <CodeView html={selected.html} fileName={`${fileSlug(selected.plan?.app_name || project.title)}-v${selected.n}.html`} />
+          ) : (
           <Preview
             html={previewHtml}
             building={isBuilding}
@@ -382,6 +433,7 @@ export default function Workspace() {
                   : undefined
             }
           />
+          )}
         </div>
       </section>
     </div>
@@ -390,4 +442,9 @@ export default function Workspace() {
 
 function statusLabel(s: Version["status"]) {
   return { planning: "规划中", planned: "待确认", building: "构建中", done: "完成", failed: "失败" }[s];
+}
+
+function fileSlug(s: string) {
+  const cleaned = s.replace(/[\\/:*?"<>|\s]+/g, "-").replace(/^-+|-+$/g, "");
+  return cleaned || "app";
 }

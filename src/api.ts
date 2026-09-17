@@ -35,6 +35,8 @@ export const api = {
   deleteProject: (id: string) => req<{ ok: true }>(`/api/projects/${id}`, { method: "DELETE" }),
   iterate: (id: string, message: string) =>
     req<{ version: Version }>(`/api/projects/${id}/iterate`, { method: "POST", body: JSON.stringify({ message }) }),
+  restoreVersion: (id: string, vid: string) =>
+    req<{ version: Version }>(`/api/projects/${id}/versions/${vid}/restore`, { method: "POST" }),
   share: (id: string) => req<{ share_slug: string }>(`/api/projects/${id}/share`, { method: "POST" }),
   unshare: (id: string) => req<{ ok: true }>(`/api/projects/${id}/share`, { method: "DELETE" }),
 

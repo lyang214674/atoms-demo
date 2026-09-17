@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { GalleryItem } from "../../shared/types";
-import { api } from "../api";
+import { ApiError, api } from "../api";
 import { useAuth } from "../auth";
 
 const EXAMPLES = [
@@ -18,6 +18,7 @@ export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
 
   useEffect(() => {
@@ -37,11 +38,14 @@ export default function Home() {
     }
     setBusy(true);
     setErr(null);
+    setHint(null);
     try {
       const { project } = await api.createProject(p);
       nav(`/p/${project.id}?auto=1`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "创建失败");
+      // 422 = the server asked for a clearer prompt; show it as guidance, not failure.
+      setHint(e instanceof ApiError && e.status === 422 ? e.message : null);
+      setErr(e instanceof ApiError && e.status === 422 ? null : e instanceof Error ? e.message : "创建失败");
     } finally {
       setBusy(false);
     }
@@ -95,6 +99,7 @@ export default function Home() {
             </button>
           </div>
           {err && <p className="px-2 pt-2 text-sm text-rose-400">{err}</p>}
+          {hint && <p className="px-2 pt-2 text-sm text-amber-300">{hint}</p>}
         </div>
         <p className="mt-3 text-xs text-slate-500">⌘/Ctrl + Enter 直接开始 · 免费注册，无需验证码</p>
       </section>
